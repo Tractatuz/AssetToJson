@@ -20,6 +20,7 @@ public class AssetToJson : ModuleRules
 			"JsonUtilities",
 			"Kismet",
 			"MovieScene",
+			"TaskEvidence",
 			"UMG",
 			"UMGEditor",
 			"UnrealEd"

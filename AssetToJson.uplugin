@@ -9,6 +9,12 @@
 	"CanContainContent": false,
 	"IsBetaVersion": true,
 	"Installed": false,
+	"Plugins": [
+		{
+			"Name": "TaskEvidence",
+			"Enabled": true
+		}
+	],
 	"Modules": [
 		{
 			"Name": "AssetToJson",

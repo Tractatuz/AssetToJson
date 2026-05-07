@@ -33,6 +33,7 @@
 #include "Policies/PrettyJsonPrintPolicy.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
+#include "TaskEvidenceBuilder.h"
 #include "UObject/UnrealType.h"
 #include "WidgetBlueprint.h"
 #include "Animation/WidgetAnimation.h"
@@ -89,6 +90,28 @@ namespace
 		}
 
 		return JsonString;
+	}
+
+	void WriteAssetToJsonEvidence(const FString& AssetPath, const FString& OutputFilePath, bool bOk, const FString& Error, int32 GraphCount = 0, int32 VariableCount = 0, int32 ComponentCount = 0)
+	{
+		FTaskEvidenceBuilder Evidence(TEXT("AssetToJson"), TEXT("ReadBlueprintVisualScriptAsJson"));
+		Evidence
+			.SetStatus(bOk ? TEXT("succeeded") : TEXT("failed"))
+			.SetSummary(bOk ? TEXT("Blueprint visual script exported to JSON.") : TEXT("Blueprint visual script export failed."), Error)
+			.AddFact(TEXT("asset_to_json.ok"), bOk)
+			.AddFact(TEXT("asset.path"), AssetPath)
+			.AddFact(TEXT("asset_to_json.graph_count"), GraphCount)
+			.AddFact(TEXT("asset_to_json.variable_count"), VariableCount)
+			.AddFact(TEXT("asset_to_json.component_count"), ComponentCount);
+
+		if (!OutputFilePath.IsEmpty())
+		{
+			Evidence.AddArtifact(OutputFilePath, TEXT("asset_export"), TEXT("application/json"), TEXT("Exported Blueprint visual script JSON."));
+		}
+
+		FString EvidencePath;
+		FString EvidenceError;
+		Evidence.WriteToDefaultLocation(EvidencePath, EvidenceError);
 	}
 
 	FString ContainerTypeToString(EPinContainerType ContainerType)
@@ -797,6 +820,7 @@ FString UAssetToJsonLibrary::ReadBlueprintVisualScriptAsJson(
 	const FString ObjectPathString = NormalizeObjectPath(AssetPath);
 	if (ObjectPathString.IsEmpty())
 	{
+		WriteAssetToJsonEvidence(AssetPath, OutputFilePath, false, TEXT("AssetPath is empty"));
 		return SerializeJson(MakeErrorJson(TEXT("AssetPath is empty")).ToSharedRef(), bPrettyPrint);
 	}
 
@@ -804,6 +828,7 @@ FString UAssetToJsonLibrary::ReadBlueprintVisualScriptAsJson(
 	UBlueprint* Blueprint = Cast<UBlueprint>(Asset);
 	if (!Blueprint)
 	{
+		WriteAssetToJsonEvidence(ObjectPathString, OutputFilePath, false, FString::Printf(TEXT("Asset is not a Blueprint or could not be loaded: %s"), *ObjectPathString));
 		return SerializeJson(MakeErrorJson(FString::Printf(TEXT("Asset is not a Blueprint or could not be loaded: %s"), *ObjectPathString)).ToSharedRef(), bPrettyPrint);
 	}
 
@@ -902,9 +927,12 @@ FString UAssetToJsonLibrary::ReadBlueprintVisualScriptAsJson(
 
 		if (!FFileHelper::SaveStringToFile(JsonString, *OutputFilePath))
 		{
+			WriteAssetToJsonEvidence(ObjectPathString, OutputFilePath, false, FString::Printf(TEXT("Failed to write JSON file: %s"), *OutputFilePath), Graphs.Num(), Variables.Num(), Components.Num());
 			return SerializeJson(MakeErrorJson(FString::Printf(TEXT("Failed to write JSON file: %s"), *OutputFilePath)).ToSharedRef(), bPrettyPrint);
 		}
 	}
+
+	WriteAssetToJsonEvidence(ObjectPathString, OutputFilePath, true, FString(), Graphs.Num(), Variables.Num(), Components.Num());
 
 	return bReturnJson ? JsonString : FString();
 }
