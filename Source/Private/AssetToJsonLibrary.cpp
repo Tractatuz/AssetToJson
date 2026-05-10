@@ -5,13 +5,13 @@
 #include "EdGraph/EdGraphPin.h"
 #include "EdGraph/EdGraphSchema.h"
 #include "EdGraphSchema_K2.h"
-#include "EdGraphUtilities.h"
 #include "Animation/AnimBlueprint.h"
 #include "Engine/Blueprint.h"
 #include "Engine/MemberReference.h"
 #include "Engine/SCS_Node.h"
 #include "Engine/SimpleConstructionScript.h"
 #include "Engine/TimelineTemplate.h"
+#include "GameFramework/Actor.h"
 #include "HAL/FileManager.h"
 #include "K2Node.h"
 #include "K2Node_CallFunction.h"
@@ -39,6 +39,7 @@
 #include "Animation/WidgetAnimation.h"
 #include "Blueprint/WidgetTree.h"
 #include "Components/PanelWidget.h"
+#include "Components/ActorComponent.h"
 #include "Components/Widget.h"
 
 namespace
@@ -162,13 +163,41 @@ namespace
 	{
 		TSharedPtr<FJsonObject> JsonPinType = MakeShared<FJsonObject>();
 		JsonPinType->SetStringField(TEXT("category"), PinType.PinCategory.ToString());
-		JsonPinType->SetStringField(TEXT("subcategory"), PinType.PinSubCategory.ToString());
-		JsonPinType->SetStringField(TEXT("subcategory_object"), ObjectPath(PinType.PinSubCategoryObject.Get()));
-		JsonPinType->SetStringField(TEXT("container"), ContainerTypeToString(PinType.ContainerType));
-		JsonPinType->SetBoolField(TEXT("is_reference"), PinType.bIsReference);
-		JsonPinType->SetBoolField(TEXT("is_const"), PinType.bIsConst);
-		JsonPinType->SetBoolField(TEXT("is_weak_pointer"), PinType.bIsWeakPointer);
-		JsonPinType->SetBoolField(TEXT("is_uobject_wrapper"), PinType.bIsUObjectWrapper);
+		if (!PinType.PinSubCategory.IsNone())
+		{
+			JsonPinType->SetStringField(TEXT("subcategory"), PinType.PinSubCategory.ToString());
+		}
+
+		if (PinType.PinSubCategoryObject.IsValid())
+		{
+			JsonPinType->SetStringField(TEXT("subcategory_object"), ObjectPath(PinType.PinSubCategoryObject.Get()));
+		}
+
+		if (PinType.ContainerType != EPinContainerType::None)
+		{
+			JsonPinType->SetStringField(TEXT("container"), ContainerTypeToString(PinType.ContainerType));
+		}
+
+		if (PinType.bIsReference)
+		{
+			JsonPinType->SetBoolField(TEXT("is_reference"), true);
+		}
+
+		if (PinType.bIsConst)
+		{
+			JsonPinType->SetBoolField(TEXT("is_const"), true);
+		}
+
+		if (PinType.bIsWeakPointer)
+		{
+			JsonPinType->SetBoolField(TEXT("is_weak_pointer"), true);
+		}
+
+		if (PinType.bIsUObjectWrapper)
+		{
+			JsonPinType->SetBoolField(TEXT("is_uobject_wrapper"), true);
+		}
+
 		return JsonPinType;
 	}
 
@@ -244,7 +273,34 @@ namespace
 		return bIsDetailsVisible && !bIsTransientOnly;
 	}
 
-	TSharedPtr<FJsonObject> ExportDetailsProperty(const UObject* Object, const FProperty* Property)
+	bool ExportPropertyValueText(const UObject* Object, const FProperty* Property, FString& OutValue)
+	{
+		if (!Object || !Property || !Object->GetClass()->IsChildOf(Property->GetOwnerClass()))
+		{
+			return false;
+		}
+
+		Property->ExportText_InContainer(0, OutValue, Object, nullptr, const_cast<UObject*>(Object), PPF_None);
+		return true;
+	}
+
+	bool HasSamePropertyValue(const UObject* Object, const UObject* ComparisonObject, const FProperty* Property, const FString& ExportedValue)
+	{
+		if (!Object || !ComparisonObject || !Property || !ComparisonObject->GetClass()->IsChildOf(Property->GetOwnerClass()))
+		{
+			return false;
+		}
+
+		FString ComparisonValue;
+		if (!ExportPropertyValueText(ComparisonObject, Property, ComparisonValue))
+		{
+			return false;
+		}
+
+		return ExportedValue == ComparisonValue;
+	}
+
+	TSharedPtr<FJsonObject> ExportDetailsProperty(const UObject* Object, const FProperty* Property, const FString& ExportedValue)
 	{
 		TSharedPtr<FJsonObject> JsonProperty = MakeShared<FJsonObject>();
 		if (!Object || !Property)
@@ -252,27 +308,15 @@ namespace
 			return JsonProperty;
 		}
 
-		FString ExportedValue;
-		Property->ExportText_InContainer(0, ExportedValue, Object, nullptr, const_cast<UObject*>(Object), PPF_None);
-
 		JsonProperty->SetStringField(TEXT("name"), Property->GetName());
-		JsonProperty->SetStringField(TEXT("display_name"), Property->GetDisplayNameText().ToString());
 		JsonProperty->SetStringField(TEXT("category"), Property->GetMetaData(TEXT("Category")));
-		JsonProperty->SetStringField(TEXT("tooltip"), Property->GetToolTipText().ToString());
 		JsonProperty->SetStringField(TEXT("cpp_type"), Property->GetCPPType());
 		JsonProperty->SetStringField(TEXT("owner_class"), ObjectPath(Property->GetOwnerClass()));
-		JsonProperty->SetStringField(TEXT("full_name"), Property->GetFullName());
-		JsonProperty->SetNumberField(TEXT("property_flags"), static_cast<double>(Property->GetPropertyFlags()));
-		JsonProperty->SetBoolField(TEXT("is_blueprint_visible"), Property->HasAnyPropertyFlags(CPF_BlueprintVisible));
-		JsonProperty->SetBoolField(TEXT("is_blueprint_read_only"), Property->HasAnyPropertyFlags(CPF_BlueprintReadOnly));
-		JsonProperty->SetBoolField(TEXT("is_editable"), Property->HasAnyPropertyFlags(CPF_Edit));
-		JsonProperty->SetBoolField(TEXT("is_config"), Property->HasAnyPropertyFlags(CPF_Config));
-		JsonProperty->SetBoolField(TEXT("is_net"), Property->HasAnyPropertyFlags(CPF_Net));
 		JsonProperty->SetStringField(TEXT("value"), ExportedValue);
 		return JsonProperty;
 	}
 
-	TSharedPtr<FJsonObject> ExportObjectDefaults(const UObject* Object)
+	TSharedPtr<FJsonObject> ExportObjectDefaults(const UObject* Object, const UObject* ComparisonObject = nullptr)
 	{
 		TSharedPtr<FJsonObject> JsonObject = MakeShared<FJsonObject>();
 		if (!Object)
@@ -282,6 +326,11 @@ namespace
 
 		JsonObject->SetStringField(TEXT("object"), ObjectPath(Object));
 		JsonObject->SetStringField(TEXT("class"), ObjectPath(Object->GetClass()));
+		if (ComparisonObject)
+		{
+			JsonObject->SetStringField(TEXT("comparison_object"), ObjectPath(ComparisonObject));
+			JsonObject->SetBoolField(TEXT("only_changed_from_comparison"), true);
+		}
 
 		TArray<TSharedPtr<FJsonValue>> Properties;
 		for (TFieldIterator<FProperty> It(Object->GetClass(), EFieldIteratorFlags::IncludeSuper); It; ++It)
@@ -292,11 +341,71 @@ namespace
 				continue;
 			}
 
-			Properties.Add(MakeShared<FJsonValueObject>(ExportDetailsProperty(Object, Property)));
+			FString ExportedValue;
+			if (!ExportPropertyValueText(Object, Property, ExportedValue))
+			{
+				continue;
+			}
+
+			if (HasSamePropertyValue(Object, ComparisonObject, Property, ExportedValue))
+			{
+				continue;
+			}
+
+			Properties.Add(MakeShared<FJsonValueObject>(ExportDetailsProperty(Object, Property, ExportedValue)));
 		}
 
 		JsonObject->SetArrayField(TEXT("properties"), Properties);
 		return JsonObject;
+	}
+
+	const UActorComponent* FindComparisonComponent(const AActor* ComparisonActor, const UActorComponent* Component)
+	{
+		if (!ComparisonActor || !Component)
+		{
+			return nullptr;
+		}
+
+		TArray<UActorComponent*> ComparisonComponents;
+		ComparisonActor->GetComponents(ComparisonComponents);
+		for (const UActorComponent* ComparisonComponent : ComparisonComponents)
+		{
+			if (ComparisonComponent && ComparisonComponent->GetFName() == Component->GetFName())
+			{
+				return ComparisonComponent;
+			}
+		}
+
+		return nullptr;
+	}
+
+	TArray<TSharedPtr<FJsonValue>> ExportActorComponentDefaults(const AActor* Actor, const AActor* ComparisonActor)
+	{
+		TArray<TSharedPtr<FJsonValue>> JsonComponents;
+		if (!Actor)
+		{
+			return JsonComponents;
+		}
+
+		TArray<UActorComponent*> Components;
+		Actor->GetComponents(Components);
+		for (const UActorComponent* Component : Components)
+		{
+			if (!Component)
+			{
+				continue;
+			}
+
+			const UActorComponent* ComparisonComponent = FindComparisonComponent(ComparisonActor, Component);
+			TSharedPtr<FJsonObject> JsonComponent = MakeShared<FJsonObject>();
+			JsonComponent->SetStringField(TEXT("name"), Component->GetName());
+			JsonComponent->SetStringField(TEXT("class"), ObjectPath(Component->GetClass()));
+			JsonComponent->SetStringField(TEXT("path"), ObjectPath(Component));
+			JsonComponent->SetObjectField(TEXT("defaults"), ExportObjectDefaults(Component, ComparisonComponent));
+			JsonComponents.Add(MakeShared<FJsonValueObject>(JsonComponent));
+		}
+
+		return JsonComponents;
 	}
 
 	TSharedPtr<FJsonObject> ExportPinRef(const UEdGraphPin* Pin)
@@ -309,9 +418,22 @@ namespace
 
 		JsonPinRef->SetStringField(TEXT("id"), PinIdToString(Pin));
 		JsonPinRef->SetStringField(TEXT("name"), Pin->PinName.ToString());
-		JsonPinRef->SetStringField(TEXT("display_name"), Pin->GetDisplayName().ToString());
-		JsonPinRef->SetStringField(TEXT("default_value"), Pin->DefaultValue);
-		JsonPinRef->SetStringField(TEXT("default_object"), ObjectPath(Pin->DefaultObject));
+		const FString DisplayName = Pin->GetDisplayName().ToString();
+		if (!DisplayName.IsEmpty() && DisplayName != Pin->PinName.ToString())
+		{
+			JsonPinRef->SetStringField(TEXT("display_name"), DisplayName);
+		}
+
+		if (!Pin->DefaultValue.IsEmpty())
+		{
+			JsonPinRef->SetStringField(TEXT("default_value"), Pin->DefaultValue);
+		}
+
+		if (Pin->DefaultObject)
+		{
+			JsonPinRef->SetStringField(TEXT("default_object"), ObjectPath(Pin->DefaultObject));
+		}
+
 		return JsonPinRef;
 	}
 
@@ -494,31 +616,39 @@ namespace
 
 		JsonPin->SetStringField(TEXT("id"), PinIdToString(Pin));
 		JsonPin->SetStringField(TEXT("name"), Pin->PinName.ToString());
-		JsonPin->SetStringField(TEXT("display_name"), Pin->GetDisplayName().ToString());
-		JsonPin->SetStringField(TEXT("direction"), PinDirectionToString(Pin->Direction));
-		JsonPin->SetObjectField(TEXT("type"), ExportPinType(Pin->PinType));
-		JsonPin->SetStringField(TEXT("default_value"), Pin->DefaultValue);
-		JsonPin->SetStringField(TEXT("default_text_value"), Pin->DefaultTextValue.ToString());
-		JsonPin->SetStringField(TEXT("default_object"), ObjectPath(Pin->DefaultObject));
-		JsonPin->SetBoolField(TEXT("hidden"), Pin->bHidden);
-		JsonPin->SetBoolField(TEXT("not_connectable"), Pin->bNotConnectable);
-
-		TArray<TSharedPtr<FJsonValue>> LinkedTo;
-		for (const UEdGraphPin* LinkedPin : Pin->LinkedTo)
+		const FString DisplayName = Pin->GetDisplayName().ToString();
+		if (!DisplayName.IsEmpty() && DisplayName != Pin->PinName.ToString())
 		{
-			if (!LinkedPin || !LinkedPin->GetOwningNode())
-			{
-				continue;
-			}
-
-			TSharedPtr<FJsonObject> JsonLink = MakeShared<FJsonObject>();
-			JsonLink->SetStringField(TEXT("node_id"), NodeIdToString(LinkedPin->GetOwningNode()));
-			JsonLink->SetStringField(TEXT("pin_id"), PinIdToString(LinkedPin));
-			JsonLink->SetStringField(TEXT("pin_name"), LinkedPin->PinName.ToString());
-			LinkedTo.Add(MakeShared<FJsonValueObject>(JsonLink));
+			JsonPin->SetStringField(TEXT("display_name"), DisplayName);
 		}
 
-		JsonPin->SetArrayField(TEXT("linked_to"), LinkedTo);
+		JsonPin->SetStringField(TEXT("direction"), PinDirectionToString(Pin->Direction));
+		JsonPin->SetObjectField(TEXT("type"), ExportPinType(Pin->PinType));
+		if (!Pin->DefaultValue.IsEmpty())
+		{
+			JsonPin->SetStringField(TEXT("default_value"), Pin->DefaultValue);
+		}
+
+		if (!Pin->DefaultTextValue.IsEmpty())
+		{
+			JsonPin->SetStringField(TEXT("default_text_value"), Pin->DefaultTextValue.ToString());
+		}
+
+		if (Pin->DefaultObject)
+		{
+			JsonPin->SetStringField(TEXT("default_object"), ObjectPath(Pin->DefaultObject));
+		}
+
+		if (Pin->bHidden)
+		{
+			JsonPin->SetBoolField(TEXT("hidden"), true);
+		}
+
+		if (Pin->bNotConnectable)
+		{
+			JsonPin->SetBoolField(TEXT("not_connectable"), true);
+		}
+
 		return JsonPin;
 	}
 
@@ -532,8 +662,15 @@ namespace
 			TEXT("NodeWidth"),
 			TEXT("NodeHeight"),
 			TEXT("NodeComment"),
+			TEXT("AdvancedPinDisplay"),
+			TEXT("bCanResizeNode"),
+			TEXT("bCommentBubblePinned"),
+			TEXT("bCommentBubbleVisible"),
+			TEXT("bCommentBubbleMakeVisible"),
+			TEXT("bCommentBubbleVisible_InDetailsPanel"),
 			TEXT("ErrorMsg"),
-			TEXT("ErrorType")
+			TEXT("ErrorType"),
+			TEXT("NodeUpgradeMessage")
 		};
 
 		TSharedPtr<FJsonObject> JsonProperties = MakeShared<FJsonObject>();
@@ -567,11 +704,6 @@ namespace
 		JsonNode->SetStringField(TEXT("title"), Node->GetNodeTitle(ENodeTitleType::FullTitle).ToString());
 		JsonNode->SetStringField(TEXT("comment"), Node->NodeComment);
 		JsonNode->SetObjectField(TEXT("semantic"), ExportNodeSemantic(Node));
-
-		TSharedPtr<FJsonObject> JsonPosition = MakeShared<FJsonObject>();
-		JsonPosition->SetNumberField(TEXT("x"), Node->NodePosX);
-		JsonPosition->SetNumberField(TEXT("y"), Node->NodePosY);
-		JsonNode->SetObjectField(TEXT("position"), JsonPosition);
 
 		TArray<TSharedPtr<FJsonValue>> Pins;
 		for (const UEdGraphPin* Pin : Node->Pins)
@@ -611,7 +743,7 @@ namespace
 		return JsonLink;
 	}
 
-	TSharedPtr<FJsonObject> ExportGraph(const UEdGraph* Graph, const FString& GraphType, bool bIncludeT3DText, bool bIncludeNodeProperties)
+	TSharedPtr<FJsonObject> ExportGraph(const UEdGraph* Graph, const FString& GraphType, bool bIncludeNodeProperties)
 	{
 		TSharedPtr<FJsonObject> JsonGraph = MakeShared<FJsonObject>();
 		if (!Graph)
@@ -671,32 +803,16 @@ namespace
 		JsonGraph->SetArrayField(TEXT("nodes"), Nodes);
 		JsonGraph->SetArrayField(TEXT("links"), Links);
 
-		if (bIncludeT3DText)
-		{
-			TSet<UObject*> NodesToExport;
-			for (UEdGraphNode* Node : Graph->Nodes)
-			{
-				if (Node)
-				{
-					NodesToExport.Add(Node);
-				}
-			}
-
-			FString ExportedText;
-			FEdGraphUtilities::ExportNodesToText(NodesToExport, ExportedText);
-			JsonGraph->SetStringField(TEXT("t3d_text"), ExportedText);
-		}
-
 		return JsonGraph;
 	}
 
-	void AddGraphs(const TArray<UEdGraph*>& Graphs, const FString& GraphType, bool bIncludeT3DText, bool bIncludeNodeProperties, TArray<TSharedPtr<FJsonValue>>& JsonGraphs, TSet<const UEdGraph*>* AddedGraphs = nullptr)
+	void AddGraphs(const TArray<UEdGraph*>& Graphs, const FString& GraphType, bool bIncludeNodeProperties, TArray<TSharedPtr<FJsonValue>>& JsonGraphs, TSet<const UEdGraph*>* AddedGraphs = nullptr)
 	{
 		for (const UEdGraph* Graph : Graphs)
 		{
 			if (Graph && (!AddedGraphs || !AddedGraphs->Contains(Graph)))
 			{
-				JsonGraphs.Add(MakeShared<FJsonValueObject>(ExportGraph(Graph, GraphType, bIncludeT3DText, bIncludeNodeProperties)));
+				JsonGraphs.Add(MakeShared<FJsonValueObject>(ExportGraph(Graph, GraphType, bIncludeNodeProperties)));
 				if (AddedGraphs)
 				{
 					AddedGraphs->Add(Graph);
@@ -817,6 +933,8 @@ FString UAssetToJsonLibrary::ReadBlueprintVisualScriptAsJson(
 	bool bIncludeT3DText,
 	bool bIncludeNodeProperties)
 {
+	(void)bIncludeT3DText;
+
 	const FString ObjectPathString = NormalizeObjectPath(AssetPath);
 	if (ObjectPathString.IsEmpty())
 	{
@@ -852,14 +970,16 @@ FString UAssetToJsonLibrary::ReadBlueprintVisualScriptAsJson(
 	Root->SetObjectField(TEXT("blueprint"), JsonBlueprint);
 
 	const UObject* ClassDefaultObject = Blueprint->GeneratedClass ? Blueprint->GeneratedClass->GetDefaultObject() : nullptr;
-	Root->SetObjectField(TEXT("class_defaults"), ExportObjectDefaults(ClassDefaultObject));
+	const UObject* ParentClassDefaultObject = Blueprint->ParentClass ? Blueprint->ParentClass->GetDefaultObject() : nullptr;
+	Root->SetObjectField(TEXT("class_defaults"), ExportObjectDefaults(ClassDefaultObject, ParentClassDefaultObject));
+	Root->SetArrayField(TEXT("component_defaults"), ExportActorComponentDefaults(Cast<AActor>(ClassDefaultObject), Cast<AActor>(ParentClassDefaultObject)));
 
 	TArray<TSharedPtr<FJsonValue>> Graphs;
 	TSet<const UEdGraph*> AddedGraphs;
-	AddGraphs(Blueprint->UbergraphPages, TEXT("ubergraph"), bIncludeT3DText, bIncludeNodeProperties, Graphs, &AddedGraphs);
-	AddGraphs(Blueprint->FunctionGraphs, TEXT("function"), bIncludeT3DText, bIncludeNodeProperties, Graphs, &AddedGraphs);
-	AddGraphs(Blueprint->MacroGraphs, TEXT("macro"), bIncludeT3DText, bIncludeNodeProperties, Graphs, &AddedGraphs);
-	AddGraphs(Blueprint->DelegateSignatureGraphs, TEXT("delegate_signature"), bIncludeT3DText, bIncludeNodeProperties, Graphs, &AddedGraphs);
+	AddGraphs(Blueprint->UbergraphPages, TEXT("ubergraph"), bIncludeNodeProperties, Graphs, &AddedGraphs);
+	AddGraphs(Blueprint->FunctionGraphs, TEXT("function"), bIncludeNodeProperties, Graphs, &AddedGraphs);
+	AddGraphs(Blueprint->MacroGraphs, TEXT("macro"), bIncludeNodeProperties, Graphs, &AddedGraphs);
+	AddGraphs(Blueprint->DelegateSignatureGraphs, TEXT("delegate_signature"), bIncludeNodeProperties, Graphs, &AddedGraphs);
 	if (const UAnimBlueprint* AnimBlueprint = Cast<UAnimBlueprint>(Blueprint))
 	{
 		TArray<UEdGraph*> AllGraphs;
@@ -868,7 +988,7 @@ FString UAssetToJsonLibrary::ReadBlueprintVisualScriptAsJson(
 		{
 			if (Graph && !AddedGraphs.Contains(Graph))
 			{
-				Graphs.Add(MakeShared<FJsonValueObject>(ExportGraph(Graph, GetAdditionalGraphType(Graph), bIncludeT3DText, bIncludeNodeProperties)));
+				Graphs.Add(MakeShared<FJsonValueObject>(ExportGraph(Graph, GetAdditionalGraphType(Graph), bIncludeNodeProperties)));
 				AddedGraphs.Add(Graph);
 			}
 		}
@@ -925,7 +1045,7 @@ FString UAssetToJsonLibrary::ReadBlueprintVisualScriptAsJson(
 			IFileManager::Get().MakeDirectory(*Directory, true);
 		}
 
-		if (!FFileHelper::SaveStringToFile(JsonString, *OutputFilePath))
+		if (!FFileHelper::SaveStringToFile(JsonString, *OutputFilePath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
 		{
 			WriteAssetToJsonEvidence(ObjectPathString, OutputFilePath, false, FString::Printf(TEXT("Failed to write JSON file: %s"), *OutputFilePath), Graphs.Num(), Variables.Num(), Components.Num());
 			return SerializeJson(MakeErrorJson(FString::Printf(TEXT("Failed to write JSON file: %s"), *OutputFilePath)).ToSharedRef(), bPrettyPrint);
