@@ -930,11 +930,8 @@ FString UAssetToJsonLibrary::ReadBlueprintVisualScriptAsJson(
 	const FString& OutputFilePath,
 	bool bPrettyPrint,
 	bool bReturnJson,
-	bool bIncludeT3DText,
 	bool bIncludeNodeProperties)
 {
-	(void)bIncludeT3DText;
-
 	const FString ObjectPathString = NormalizeObjectPath(AssetPath);
 	if (ObjectPathString.IsEmpty())
 	{
