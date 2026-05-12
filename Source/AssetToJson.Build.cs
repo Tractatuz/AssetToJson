@@ -15,9 +15,10 @@ public class AssetToJson : ModuleRules
 
 		PrivateDependencyModuleNames.AddRange(new string[]
 		{
+			"AnimGraph",
 			"BlueprintGraph",
+			"InputCore",
 			"Json",
-			"JsonUtilities",
 			"Kismet",
 			"MovieScene",
 			"TaskEvidence",
