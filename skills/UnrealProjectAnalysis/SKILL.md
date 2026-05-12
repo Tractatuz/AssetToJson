@@ -23,11 +23,13 @@ Identify the likely relevant source files, config files, assets, Blueprints, inp
 
 Search and read relevant C++ headers, C++ implementation files, `.Build.cs`, target files, and `Config/*.ini`. Use source code to identify class ownership, inheritance, Blueprint hooks, reflected properties, input bindings, delegates, components, constructors, lifecycle functions, and runtime control flow.
 
+If a relevant `UPROPERTY` can be edited or overridden by Blueprint defaults, classify the owning Blueprint asset as required evidence and read it before finalizing the analysis.
+
 4. Inspect assets when asset data affects the answer.
 
 Locate related assets from C++ properties, config paths, soft object references, input mapping contexts, animation classes, widgets, Blueprint class references, maps, naming patterns, or asset registry relationships.
 
-Use the `asset-to-json` command only when binary asset internals must be read, such as Blueprint graphs, Blueprint variables, component defaults, CDO values, timelines, Enhanced Input assets, widget structure, animation data, or asset metadata. Do not treat `.uasset` binary files as directly readable source.
+When binary asset data must be read, use the `asset-to-json` command, such as for Blueprint graphs, Blueprint variables, component defaults, CDO values, timelines, Enhanced Input assets, widget structure, animation data, or asset metadata. Do not treat `.uasset` binary files as directly readable source.
 
 5. Cross-validate the evidence.
 
@@ -41,6 +43,7 @@ State what evidence was used, what was cross-validated, and what could not be in
 
 - Read the local class hierarchy first, especially base character, pawn, controller, component, ability, animation, UI, and feature-specific classes.
 - Inspect `UPROPERTY` and `UFUNCTION` metadata to understand Blueprint-facing extension points and defaults.
+- When a relevant `UPROPERTY` is Blueprint-editable, Blueprint-readable with asset-assigned defaults, exposed on spawn, instanced, or otherwise likely to differ from the C++ constructor value, inspect the owning Blueprint before treating the C++ value as final behavior.
 - Check constructors, `BeginPlay`, `SetupPlayerInputComponent`, tick functions, overlap callbacks, delegates, timers, RPCs, and component initialization.
 - Check relevant `.ini` files for maps, GameMode, input settings, redirects, collision channels, plugin settings, and project defaults.
 - Preserve Unreal terminology precisely: package path, object path, generated class, CDO, component, graph, pin, node, mapping context, action, and asset registry data.
