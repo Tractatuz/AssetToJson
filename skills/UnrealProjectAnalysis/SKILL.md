@@ -10,9 +10,11 @@ The goal is to explain runtime behavior from evidence across source code, config
 
 ## Workflow
 
-1. Ask the user's intent when the requested analysis scope is ambiguous.
+1. Clarify Scope First
 
-If everything is not deterministically certain, be sure to ask questions.
+If the requested analysis scope is ambiguous, do not begin code/config/asset inspection immediately. Ask the user's intent first.
+
+If the request is broad, lacks a stated focus/depth/goal, or cannot be answered deterministically, ask clarifying questions using the available tool.
 
 2. Classify what must be inspected.
 
