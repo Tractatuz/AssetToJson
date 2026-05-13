@@ -5,15 +5,14 @@ description: Analyze Unreal Engine project gameplay logic by reading C++, Config
 
 ## Purpose
 
-Use this skill as the primary workflow when the user asks to analyze all or part of an Unreal Engine project, including gameplay behavior, feature flow, system structure, project logic, or the relationship between C++ classes, config, Blueprint, and assets.
+Use this skill as the primary workflow when agent need to analyze all or part of an Unreal Engine project.
+The goal is to explain runtime behavior from evidence across source code, config, Blueprint graphs, component defaults, CDO values, input assets, animation/UI assets, content references and so on.
 
-The goal is to explain runtime behavior from evidence across source code, config, Blueprint graphs, component defaults, CDO values, input assets, animation/UI assets, and content references.
+## Workflow
 
-## Default Workflow
+1. Ask the user's intent when the requested analysis scope is ambiguous.
 
-1. Clarify the user's intent when the requested analysis scope is ambiguous.
-
-Ask what behavior, feature, bug, class, map, Blueprint, or asset path they want analyzed. If the user already provided a clear target, proceed without asking.
+If everything is not deterministically certain, be sure to ask questions.
 
 2. Classify what must be inspected.
 
@@ -23,7 +22,7 @@ Identify the likely relevant source files, config files, assets, Blueprints, inp
 
 Search and read relevant C++ headers, C++ implementation files, `.Build.cs`, target files, and `Config/*.ini`. Use source code to identify class ownership, inheritance, Blueprint hooks, reflected properties, input bindings, delegates, components, constructors, lifecycle functions, and runtime control flow.
 
-If a relevant `UPROPERTY` can be edited or overridden by Blueprint defaults, classify the owning Blueprint asset as required evidence and read it before finalizing the analysis.
+If a relevant `UPROPERTY` can be edited or overridden by Blueprint defaults(EditDefaultsOnly | EditAnywhere | BlueprintReadWrite), classify the owning Blueprint asset as required evidence and read it before finalizing the analysis.
 
 4. Inspect assets when asset data affects the answer.
 
