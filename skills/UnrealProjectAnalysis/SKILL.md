@@ -29,7 +29,9 @@ If a relevant `UPROPERTY` can be edited or overridden by Blueprint defaults, cla
 
 Locate related assets from C++ properties, config paths, soft object references, input mapping contexts, animation classes, widgets, Blueprint class references, maps, naming patterns, or asset registry relationships.
 
-When binary asset data must be read, use the `asset-to-json` command, such as for Blueprint graphs, Blueprint variables, component defaults, CDO values, timelines, Enhanced Input assets, widget structure, animation data, or asset metadata. Do not treat `.uasset` binary files as directly readable source.
+When source analysis starts from a C++ class and Blueprint subclasses may override defaults, components, graphs, animation classes, widgets, events, or exposed properties, first discover derived Blueprint assets with `scripts/find_derived_blueprint_assets.ps1`. Use the discovered assets to decide which specific Blueprints must be inspected with `scripts/read_asset_json.ps1`.
+
+When binary asset data must be read, use `scripts/read_asset_json.ps1`, such as for Blueprint graphs, Blueprint variables, component defaults, CDO values, timelines, Enhanced Input assets, widget structure, animation data, or asset metadata. Do not treat `.uasset` binary files as directly readable source.
 
 5. Cross-validate the evidence.
 
@@ -44,40 +46,81 @@ State what evidence was used, what was cross-validated, and what could not be in
 - Read the local class hierarchy first, especially base character, pawn, controller, component, ability, animation, UI, and feature-specific classes.
 - Inspect `UPROPERTY` and `UFUNCTION` metadata to understand Blueprint-facing extension points and defaults.
 - When a relevant `UPROPERTY` is Blueprint-editable, Blueprint-readable with asset-assigned defaults, exposed on spawn, instanced, or otherwise likely to differ from the C++ constructor value, inspect the owning Blueprint before treating the C++ value as final behavior.
+- If the owning Blueprint is not already known, search for Blueprint assets derived from the relevant native or Blueprint parent class before finalizing the analysis.
 - Check constructors, `BeginPlay`, `SetupPlayerInputComponent`, tick functions, overlap callbacks, delegates, timers, RPCs, and component initialization.
 - Check relevant `.ini` files for maps, GameMode, input settings, redirects, collision channels, plugin settings, and project defaults.
 - Preserve Unreal terminology precisely: package path, object path, generated class, CDO, component, graph, pin, node, mapping context, action, and asset registry data.
+
+## Derived Blueprint Discovery
+
+Use this step when you know a C++ or Blueprint parent class but do not know which Blueprint assets inherit from it. The helper uses Unreal Asset Registry derived-class data, so indirect inheritance through native C++ classes and Blueprint generated classes is included unless `-DirectOnly` is specified. For example, searching `/Script/Engine.Actor` can return Blueprints whose immediate parent is a project C++ class that ultimately derives from `AActor`.
+
+Run the helper from the skill root with the Bash tool using PowerShell syntax:
+
+```powershell
+& "scripts\find_derived_blueprint_assets.ps1" -ClassPath "/Script/TestTPS.TestTPSCharacter" -NoOutputFile
+```
+
+Supported options:
+
+- `-ClassPath <path>`: parent class path, usually `/Script/<Module>.<ClassName>` for native C++ classes or a generated class path for Blueprint classes.
+- `-SearchPaths <paths>`: content roots to scan, default is `/Game`.
+- `-DirectOnly`: include only Blueprints whose immediate parent class is the target class.
+- `-NoOutputFile`: return JSON in command output for immediate context.
+- `-OutputJson <path>`: save JSON to a specific path.
+- `-TimeoutSeconds <seconds>` and `-EnginePath <path>`: remote execution configuration.
+
+The helper requires an editor instance with Python Remote Execution available. If no remote node is found, report that Blueprint discovery could not be performed; do not guess that no derived Blueprints exist.
+
+Run derived Blueprint discovery commands sequentially. Do not run multiple `find_derived_blueprint_assets.ps1` instances in parallel, and do not parallelize them with other Unreal Remote Execution commands, because the editor command socket can reject or reset concurrent connections.
+
+Interpret the returned JSON fields:
+
+- `assets[].path`: package path to pass to `scripts/read_asset_json.ps1`.
+- `assets[].object_path`: full Blueprint asset object path.
+- `assets[].parent_class`: immediate parent class.
+- `assets[].generated_class`: generated class for runtime inheritance checks.
+- `assets[].is_direct_child`: whether the Blueprint directly inherits from the searched class.
+
+If many assets are returned, prioritize ones referenced by maps, config, GameMode defaults, input/animation/widget properties, nearby feature folders, or naming patterns. Then read the selected assets with `scripts/read_asset_json.ps1`.
 
 ## Asset Path Normalization
 
 Accept common Unreal asset path forms and convert them to a long package path or object path as needed:
 
 ```text
-/Game/Variant_Combat/Blueprints/BP_CombatCharacter
-/Game/Variant_Combat/Blueprints/BP_CombatCharacter.BP_CombatCharacter
-Content/Variant_Combat/Blueprints/BP_CombatCharacter.uasset
-BP_CombatCharacter when the location is obvious from search results
+/Game/<FolderPath>/<AssetName>
+/Game/<FolderPath>/<AssetName>.<AssetName>
+Content/<FolderPath>/<AssetName>.uasset
+<AssetName> when the location is obvious from search results
 ```
 
 If the path is ambiguous, locate it with file search, usually by searching `Content/**/*.uasset` for the asset name.
 
-## asset-to-json Command
+## Asset JSON Helper
 
-Use `asset-to-json` only when asset internals are needed for the analysis.
+Use `scripts/read_asset_json.ps1` only when asset internals are needed for the analysis.
 
-Command arguments:
+Run the helper from the skill root with the Bash tool using PowerShell syntax:
 
-- `<asset-path>`: Unreal package path, object path, or recognizable asset file path.
-- `--include-node-properties`: include detailed Blueprint node properties when needed.
-- `--save`: save JSON to the default output location.
-- `--output <path>`: save JSON to a specific output path.
+```powershell
+& "scripts\read_asset_json.ps1" -AssetPath "/Game/<FolderPath>/<AssetName>" -NoOutputFile
+```
+
+Supported options:
+
+- `-AssetPath <path>`: Unreal package path, object path, or recognizable asset file path.
+- `-IncludeNodeProperties`: include detailed Blueprint node properties when needed.
+- `-NoOutputFile`: return JSON in command output for immediate context.
+- `-OutputJson <path>`: save JSON to a specific output path.
+- `-TimeoutSeconds <seconds>` and `-EnginePath <path>`: remote execution configuration.
 
 Examples:
 
-```text
-/asset-to-json /Game/Variant_Combat/Blueprints/BP_CombatCharacter
-/asset-to-json /Game/Variant_Combat/Blueprints/BP_CombatCharacter --include-node-properties
-/asset-to-json /Game/Variant_Combat/Blueprints/BP_CombatCharacter --output Saved/AssetToJson/BP_CombatCharacter.json
+```powershell
+& "scripts\read_asset_json.ps1" -AssetPath "/Game/<FolderPath>/<AssetName>" -NoOutputFile
+& "scripts\read_asset_json.ps1" -AssetPath "/Game/<FolderPath>/<AssetName>" -IncludeNodeProperties -NoOutputFile
+& "scripts\read_asset_json.ps1" -AssetPath "/Game/<FolderPath>/<AssetName>" -OutputJson "Saved/AssetToJson/<AssetName>.json"
 ```
 
 If multiple assets must be inspected, export and read them one at a time.
