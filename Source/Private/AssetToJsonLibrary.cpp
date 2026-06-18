@@ -2,12 +2,17 @@
 
 #include "AssetToJsonBlueprintExport.h"
 #include "AssetToJsonEnhancedInputExport.h"
+#include "AssetToJsonTableExport.h"
+#include "AssetToJsonWorldExport.h"
 
 #include "Engine/Blueprint.h"
+#include "Engine/DataTable.h"
+#include "Engine/World.h"
 #include "HAL/FileManager.h"
 #include "Misc/EngineVersion.h"
 #include "Misc/FileHelper.h"
 #include "Misc/PackageName.h"
+#include "Misc/Paths.h"
 #include "Policies/CondensedJsonPrintPolicy.h"
 #include "Policies/PrettyJsonPrintPolicy.h"
 #include "Serialization/JsonSerializer.h"
@@ -28,6 +33,23 @@ namespace AssetToJsonLibraryPrivate
 	FString NormalizeObjectPath(const FString& AssetPath)
 	{
 		const FString TrimmedPath = AssetPath.TrimStartAndEnd();
+		if (TrimmedPath.EndsWith(TEXT(".umap"), ESearchCase::IgnoreCase))
+		{
+			FString NormalizedFilename = TrimmedPath;
+			FPaths::NormalizeFilename(NormalizedFilename);
+
+			FString LongPackageName;
+			if (!FPackageName::TryConvertFilenameToLongPackageName(NormalizedFilename, LongPackageName))
+			{
+				const FString FullFilename = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir(), NormalizedFilename);
+				FPackageName::TryConvertFilenameToLongPackageName(FullFilename, LongPackageName);
+			}
+
+			if (FPackageName::IsValidLongPackageName(LongPackageName))
+			{
+				return FString::Printf(TEXT("%s.%s"), *LongPackageName, *FPackageName::GetLongPackageAssetName(LongPackageName));
+			}
+		}
 
 		if (!TrimmedPath.Contains(TEXT(".")) && FPackageName::IsValidLongPackageName(TrimmedPath))
 		{
@@ -147,10 +169,37 @@ FString UAssetToJsonLibrary::ReadAssetAsJson(
 		return ReadBlueprintVisualScriptAsJson(ObjectPathString, OutputFilePath, bPrettyPrint, bReturnJson, bIncludeNodeProperties);
 	}
 
+	if (UWorld* World = Cast<UWorld>(Asset))
+	{
+		return AssetToJson::ReadWorldAsJson(World, ObjectPathString, OutputFilePath, bPrettyPrint, bReturnJson, bIncludeNodeProperties);
+	}
+
 	if (AssetToJson::IsEnhancedInputAsset(Asset))
 	{
 		TArray<TSharedPtr<FJsonValue>> Warnings;
 		const FString JsonString = AssetToJsonLibraryPrivate::SerializeJson(AssetToJson::ExportEnhancedInputAsset(Asset, ObjectPathString, Warnings).ToSharedRef(), bPrettyPrint);
+		if (!AssetToJsonLibraryPrivate::SaveJsonStringToFile(JsonString, OutputFilePath))
+		{
+			return AssetToJsonLibraryPrivate::SerializeJson(AssetToJsonLibraryPrivate::MakeErrorJson(FString::Printf(TEXT("Failed to write JSON file: %s"), *OutputFilePath)).ToSharedRef(), bPrettyPrint);
+		}
+
+		return bReturnJson ? JsonString : FString();
+	}
+
+	if (const UDataTable* DataTable = Cast<UDataTable>(Asset))
+	{
+		const FString JsonString = AssetToJsonLibraryPrivate::SerializeJson(AssetToJson::ExportDataTableAsset(DataTable, ObjectPathString).ToSharedRef(), bPrettyPrint);
+		if (!AssetToJsonLibraryPrivate::SaveJsonStringToFile(JsonString, OutputFilePath))
+		{
+			return AssetToJsonLibraryPrivate::SerializeJson(AssetToJsonLibraryPrivate::MakeErrorJson(FString::Printf(TEXT("Failed to write JSON file: %s"), *OutputFilePath)).ToSharedRef(), bPrettyPrint);
+		}
+
+		return bReturnJson ? JsonString : FString();
+	}
+
+	if (AssetToJson::IsChooserTableAsset(Asset))
+	{
+		const FString JsonString = AssetToJsonLibraryPrivate::SerializeJson(AssetToJson::ExportChooserTableAsset(Asset, ObjectPathString).ToSharedRef(), bPrettyPrint);
 		if (!AssetToJsonLibraryPrivate::SaveJsonStringToFile(JsonString, OutputFilePath))
 		{
 			return AssetToJsonLibraryPrivate::SerializeJson(AssetToJsonLibraryPrivate::MakeErrorJson(FString::Printf(TEXT("Failed to write JSON file: %s"), *OutputFilePath)).ToSharedRef(), bPrettyPrint);
