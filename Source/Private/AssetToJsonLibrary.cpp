@@ -2,12 +2,14 @@
 
 #include "AssetToJsonBlueprintExport.h"
 #include "AssetToJsonEnhancedInputExport.h"
+#include "AssetToJsonAnimationAssetExport.h"
 #include "AssetToJsonTableExport.h"
 #include "AssetToJsonWorldExport.h"
 
 #include "Engine/Blueprint.h"
 #include "Engine/DataTable.h"
 #include "Engine/World.h"
+#include "Animation/AnimationAsset.h"
 #include "HAL/FileManager.h"
 #include "Misc/EngineVersion.h"
 #include "Misc/FileHelper.h"
@@ -178,6 +180,17 @@ FString UAssetToJsonLibrary::ReadAssetAsJson(
 	{
 		TArray<TSharedPtr<FJsonValue>> Warnings;
 		const FString JsonString = AssetToJsonLibraryPrivate::SerializeJson(AssetToJson::ExportEnhancedInputAsset(Asset, ObjectPathString, Warnings).ToSharedRef(), bPrettyPrint);
+		if (!AssetToJsonLibraryPrivate::SaveJsonStringToFile(JsonString, OutputFilePath))
+		{
+			return AssetToJsonLibraryPrivate::SerializeJson(AssetToJsonLibraryPrivate::MakeErrorJson(FString::Printf(TEXT("Failed to write JSON file: %s"), *OutputFilePath)).ToSharedRef(), bPrettyPrint);
+		}
+
+		return bReturnJson ? JsonString : FString();
+	}
+
+	if (AssetToJson::IsAnimationAsset(Asset))
+	{
+		const FString JsonString = AssetToJsonLibraryPrivate::SerializeJson(AssetToJson::ExportAnimationAsset(Cast<UAnimationAsset>(Asset), ObjectPathString).ToSharedRef(), bPrettyPrint);
 		if (!AssetToJsonLibraryPrivate::SaveJsonStringToFile(JsonString, OutputFilePath))
 		{
 			return AssetToJsonLibraryPrivate::SerializeJson(AssetToJsonLibraryPrivate::MakeErrorJson(FString::Printf(TEXT("Failed to write JSON file: %s"), *OutputFilePath)).ToSharedRef(), bPrettyPrint);

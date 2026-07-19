@@ -9,7 +9,9 @@
 #include "EdGraph/EdGraphSchema.h"
 #include "EdGraphSchema_K2.h"
 #include "Animation/AnimBlueprint.h"
+#include "Animation/AnimationAsset.h"
 #include "AnimGraphNode_Base.h"
+#include "AnimGraphNode_AssetPlayerBase.h"
 #include "Engine/Blueprint.h"
 #include "Engine/MemberReference.h"
 #include "Engine/SCS_Node.h"
@@ -785,6 +787,8 @@ namespace
 		}
 
 		JsonGraph->SetStringField(TEXT("name"), Graph->GetName());
+		JsonGraph->SetStringField(TEXT("path"), ObjectPath(Graph));
+		JsonGraph->SetStringField(TEXT("outer"), ObjectPath(Graph->GetOuter()));
 		JsonGraph->SetStringField(TEXT("type"), GraphType);
 		JsonGraph->SetStringField(TEXT("schema"), ClassPath(Graph->GetSchema()));
 
@@ -837,6 +841,174 @@ namespace
 		JsonGraph->SetArrayField(TEXT("links"), Links);
 
 		return JsonGraph;
+	}
+
+	void AddReferencedAsset(TMap<FString, TSharedPtr<FJsonObject>>& ReferencedAssets, const UObject* Object, const FString& Source, const FString& Detail)
+	{
+		if (!Object)
+		{
+			return;
+		}
+
+		const UObject* ReferencedObject = Object;
+		if (const UClass* Class = Cast<UClass>(ReferencedObject))
+		{
+			if (const UBlueprint* ClassBlueprint = Cast<UBlueprint>(Class->ClassGeneratedBy))
+			{
+				ReferencedObject = ClassBlueprint;
+			}
+		}
+
+		if (!ReferencedObject->IsA<UAnimationAsset>() && !ReferencedObject->IsA<UBlueprint>())
+		{
+			return;
+		}
+
+		const FString Path = ObjectPath(ReferencedObject);
+		if (Path.IsEmpty())
+		{
+			return;
+		}
+
+		TSharedPtr<FJsonObject>* ExistingAsset = ReferencedAssets.Find(Path);
+		if (!ExistingAsset)
+		{
+			TSharedPtr<FJsonObject> JsonAsset = MakeShared<FJsonObject>();
+			JsonAsset->SetStringField(TEXT("path"), Path);
+			JsonAsset->SetStringField(TEXT("class"), ClassPath(ReferencedObject));
+			JsonAsset->SetArrayField(TEXT("sources"), TArray<TSharedPtr<FJsonValue>>());
+			ReferencedAssets.Add(Path, JsonAsset);
+			ExistingAsset = ReferencedAssets.Find(Path);
+		}
+
+		if (ExistingAsset)
+		{
+			TArray<TSharedPtr<FJsonValue>> Sources;
+			const TArray<TSharedPtr<FJsonValue>>* ExistingSources = nullptr;
+			if ((*ExistingAsset)->TryGetArrayField(TEXT("sources"), ExistingSources) && ExistingSources)
+			{
+				Sources = *ExistingSources;
+			}
+
+			TSharedPtr<FJsonObject> JsonSource = MakeShared<FJsonObject>();
+			JsonSource->SetStringField(TEXT("source"), Source);
+			JsonSource->SetStringField(TEXT("detail"), Detail);
+			Sources.Add(MakeShared<FJsonValueObject>(JsonSource));
+			(*ExistingAsset)->SetArrayField(TEXT("sources"), Sources);
+		}
+	}
+
+	void AddReferencedAssetPath(TMap<FString, TSharedPtr<FJsonObject>>& ReferencedAssets, const FString& Path, const FString& Source, const FString& Detail)
+	{
+		if (Path.IsEmpty() || ReferencedAssets.Contains(Path))
+		{
+			return;
+		}
+
+		TSharedPtr<FJsonObject> JsonAsset = MakeShared<FJsonObject>();
+		JsonAsset->SetStringField(TEXT("path"), Path);
+		JsonAsset->SetStringField(TEXT("class"), FString());
+		TArray<TSharedPtr<FJsonValue>> Sources;
+		TSharedPtr<FJsonObject> JsonSource = MakeShared<FJsonObject>();
+		JsonSource->SetStringField(TEXT("source"), Source);
+		JsonSource->SetStringField(TEXT("detail"), Detail);
+		Sources.Add(MakeShared<FJsonValueObject>(JsonSource));
+		JsonAsset->SetArrayField(TEXT("sources"), Sources);
+		ReferencedAssets.Add(Path, JsonAsset);
+	}
+
+	void AddPropertyReferencedAssets(TMap<FString, TSharedPtr<FJsonObject>>& ReferencedAssets, const UEdGraphNode* Node)
+	{
+		if (!Node)
+		{
+			return;
+		}
+
+		for (TFieldIterator<FProperty> It(Node->GetClass()); It; ++It)
+		{
+			const FProperty* Property = *It;
+			if (!Property)
+			{
+				continue;
+			}
+
+			const FString Detail = FString::Printf(TEXT("%s.%s"), *Node->GetName(), *Property->GetName());
+			if (const FObjectPropertyBase* ObjectProperty = CastField<FObjectPropertyBase>(Property))
+			{
+				AddReferencedAsset(ReferencedAssets, ObjectProperty->GetObjectPropertyValue_InContainer(Node), TEXT("node_property"), Detail);
+			}
+			else if (const FSoftObjectProperty* SoftObjectProperty = CastField<FSoftObjectProperty>(Property))
+			{
+				const FSoftObjectPtr SoftObject = SoftObjectProperty->GetPropertyValue_InContainer(Node);
+				AddReferencedAssetPath(ReferencedAssets, SoftObject.ToSoftObjectPath().ToString(), TEXT("node_soft_property"), Detail);
+			}
+		}
+	}
+
+	TArray<TSharedPtr<FJsonValue>> ExportReferencedAssets(const UAnimBlueprint* AnimBlueprint)
+	{
+		TArray<TSharedPtr<FJsonValue>> Assets;
+		if (!AnimBlueprint)
+		{
+			return Assets;
+		}
+
+		TMap<FString, TSharedPtr<FJsonObject>> ReferencedAssets;
+		TArray<UEdGraph*> AllGraphs;
+		AnimBlueprint->GetAllGraphs(AllGraphs);
+		for (const UEdGraph* Graph : AllGraphs)
+		{
+			if (!Graph)
+			{
+				continue;
+			}
+
+			for (const UEdGraphNode* Node : Graph->Nodes)
+			{
+				if (!Node)
+				{
+					continue;
+				}
+
+				const FString Source = FString::Printf(TEXT("graph:%s node:%s"), *ObjectPath(Graph), *Node->GetName());
+				for (const UEdGraphPin* Pin : Node->Pins)
+				{
+					if (Pin && Pin->DefaultObject)
+					{
+						AddReferencedAsset(ReferencedAssets, Pin->DefaultObject, Source, FString::Printf(TEXT("pin:%s default_object"), *Pin->PinName.ToString()));
+					}
+				}
+
+				AddPropertyReferencedAssets(ReferencedAssets, Node);
+
+				if (const UAnimGraphNode_Base* AnimGraphNode = Cast<UAnimGraphNode_Base>(Node))
+				{
+					AddReferencedAsset(ReferencedAssets, AnimGraphNode->GetAnimationAsset(), Source, TEXT("anim_graph_node.animation_asset"));
+				}
+
+				if (const UAnimGraphNode_AssetPlayerBase* AssetPlayerNode = Cast<UAnimGraphNode_AssetPlayerBase>(Node))
+				{
+					TArray<UAnimationAsset*> ReferredAssets;
+					const_cast<UAnimGraphNode_AssetPlayerBase*>(AssetPlayerNode)->GetAllAnimationSequencesReferred(ReferredAssets);
+					for (const UAnimationAsset* ReferredAsset : ReferredAssets)
+					{
+						AddReferencedAsset(ReferencedAssets, ReferredAsset, Source, TEXT("asset_player.referred_animation_asset"));
+					}
+				}
+			}
+		}
+
+		ReferencedAssets.ValueSort([](const TSharedPtr<FJsonObject>& Left, const TSharedPtr<FJsonObject>& Right)
+		{
+			return Left->GetStringField(TEXT("path")) < Right->GetStringField(TEXT("path"));
+		});
+
+		for (const TPair<FString, TSharedPtr<FJsonObject>>& ReferencedAsset : ReferencedAssets)
+		{
+			Assets.Add(MakeShared<FJsonValueObject>(ReferencedAsset.Value));
+		}
+
+		return Assets;
 	}
 
 	void AddGraphs(const TArray<UEdGraph*>& Graphs, const FString& GraphType, bool bIncludeNodeProperties, TArray<TSharedPtr<FJsonValue>>& JsonGraphs, TSet<const UEdGraph*>* AddedGraphs = nullptr)
@@ -1012,6 +1184,7 @@ FString AssetToJson::ReadBlueprintVisualScriptAsJson(
 		TSharedPtr<FJsonObject> JsonAnimBlueprint = MakeShared<FJsonObject>();
 		JsonAnimBlueprint->SetStringField(TEXT("target_skeleton"), ObjectPath(AnimBlueprint->TargetSkeleton));
 		JsonAnimBlueprint->SetArrayField(TEXT("state_machines"), AssetToJson::ExportAnimationStateMachines(AnimBlueprint));
+		JsonAnimBlueprint->SetArrayField(TEXT("referenced_assets"), ExportReferencedAssets(AnimBlueprint));
 		Root->SetObjectField(TEXT("anim_blueprint"), JsonAnimBlueprint);
 	}
 	Root->SetArrayField(TEXT("graphs"), Graphs);

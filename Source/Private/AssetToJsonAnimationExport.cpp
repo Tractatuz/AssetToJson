@@ -5,6 +5,9 @@
 #include "AnimationStateMachineGraph.h"
 #include "AnimGraphNode_AssetPlayerBase.h"
 #include "AnimGraphNode_Base.h"
+#include "AnimGraphNode_LinkedAnimGraph.h"
+#include "AnimGraphNode_LinkedAnimLayer.h"
+#include "AnimGraphNode_LinkedInputPose.h"
 #include "AnimGraphNode_StateMachineBase.h"
 #include "AnimStateEntryNode.h"
 #include "AnimStateNode.h"
@@ -117,6 +120,66 @@ namespace AssetToJsonAnimationPrivate
 
 		return JsonStateMachine;
 	}
+
+	TSharedPtr<FJsonObject> ExportLinkedInputPose(const UAnimGraphNode_LinkedInputPose* LinkedInputPoseNode)
+	{
+		TSharedPtr<FJsonObject> JsonLinkedInputPose = MakeShared<FJsonObject>();
+		if (!LinkedInputPoseNode)
+		{
+			return JsonLinkedInputPose;
+		}
+
+		JsonLinkedInputPose->SetStringField(TEXT("kind"), TEXT("linked_input_pose"));
+		JsonLinkedInputPose->SetNumberField(TEXT("input_pose_index"), LinkedInputPoseNode->InputPoseIndex);
+		JsonLinkedInputPose->SetStringField(TEXT("function_name"), LinkedInputPoseNode->FunctionReference.GetMemberName().ToString());
+		JsonLinkedInputPose->SetStringField(TEXT("function_parent_class"), ObjectPath(LinkedInputPoseNode->FunctionReference.GetMemberParentClass()));
+
+		TArray<TSharedPtr<FJsonValue>> Inputs;
+		for (const FAnimBlueprintFunctionPinInfo& Input : LinkedInputPoseNode->Inputs)
+		{
+			TSharedPtr<FJsonObject> JsonInput = MakeShared<FJsonObject>();
+			JsonInput->SetStringField(TEXT("name"), Input.Name.ToString());
+			JsonInput->SetStringField(TEXT("category"), Input.Type.PinCategory.ToString());
+			JsonInput->SetStringField(TEXT("subcategory"), Input.Type.PinSubCategory.ToString());
+			JsonInput->SetStringField(TEXT("subcategory_object"), ObjectPath(Input.Type.PinSubCategoryObject.Get()));
+			Inputs.Add(MakeShared<FJsonValueObject>(JsonInput));
+		}
+		JsonLinkedInputPose->SetArrayField(TEXT("inputs"), Inputs);
+		return JsonLinkedInputPose;
+	}
+
+	TSharedPtr<FJsonObject> ExportLinkedAnimGraph(const UAnimGraphNode_LinkedAnimGraph* LinkedAnimGraphNode)
+	{
+		TSharedPtr<FJsonObject> JsonLinkedGraph = MakeShared<FJsonObject>();
+		if (!LinkedAnimGraphNode)
+		{
+			return JsonLinkedGraph;
+		}
+
+		JsonLinkedGraph->SetStringField(TEXT("kind"), TEXT("linked_anim_graph"));
+		JsonLinkedGraph->SetStringField(TEXT("instance_class"), ObjectPath(LinkedAnimGraphNode->Node.InstanceClass));
+		JsonLinkedGraph->SetBoolField(TEXT("receive_notifies_from_linked_instances"), LinkedAnimGraphNode->Node.bReceiveNotifiesFromLinkedInstances);
+		JsonLinkedGraph->SetBoolField(TEXT("propagate_notifies_to_linked_instances"), LinkedAnimGraphNode->Node.bPropagateNotifiesToLinkedInstances);
+		return JsonLinkedGraph;
+	}
+
+	TSharedPtr<FJsonObject> ExportLinkedAnimLayer(const UAnimGraphNode_LinkedAnimLayer* LinkedAnimLayerNode)
+	{
+		TSharedPtr<FJsonObject> JsonLinkedLayer = MakeShared<FJsonObject>();
+		if (!LinkedAnimLayerNode)
+		{
+			return JsonLinkedLayer;
+		}
+
+		JsonLinkedLayer->SetStringField(TEXT("kind"), TEXT("linked_anim_layer"));
+		JsonLinkedLayer->SetStringField(TEXT("instance_class"), ObjectPath(LinkedAnimLayerNode->Node.InstanceClass));
+		JsonLinkedLayer->SetStringField(TEXT("layer_name"), LinkedAnimLayerNode->Node.Layer.ToString());
+		JsonLinkedLayer->SetStringField(TEXT("interface_guid"), GuidToString(LinkedAnimLayerNode->InterfaceGuid));
+		JsonLinkedLayer->SetStringField(TEXT("interface"), ObjectPath(LinkedAnimLayerNode->Node.Interface));
+		JsonLinkedLayer->SetBoolField(TEXT("receive_notifies_from_linked_instances"), LinkedAnimLayerNode->Node.bReceiveNotifiesFromLinkedInstances);
+		JsonLinkedLayer->SetBoolField(TEXT("propagate_notifies_to_linked_instances"), LinkedAnimLayerNode->Node.bPropagateNotifiesToLinkedInstances);
+		return JsonLinkedLayer;
+	}
 }
 
 namespace AssetToJson
@@ -176,6 +239,21 @@ namespace AssetToJson
 		{
 			JsonAnimNode->SetStringField(TEXT("state_machine_name"), const_cast<UAnimGraphNode_StateMachineBase*>(StateMachineNode)->GetStateMachineName());
 			JsonAnimNode->SetObjectField(TEXT("state_machine"), AssetToJsonAnimationPrivate::ExportAnimationStateMachine(StateMachineNode->EditorStateMachineGraph));
+		}
+
+		if (const UAnimGraphNode_LinkedAnimGraph* LinkedAnimGraphNode = Cast<UAnimGraphNode_LinkedAnimGraph>(AnimGraphNode))
+		{
+			JsonAnimNode->SetObjectField(TEXT("linked_anim_graph"), AssetToJsonAnimationPrivate::ExportLinkedAnimGraph(LinkedAnimGraphNode));
+		}
+
+		if (const UAnimGraphNode_LinkedAnimLayer* LinkedAnimLayerNode = Cast<UAnimGraphNode_LinkedAnimLayer>(AnimGraphNode))
+		{
+			JsonAnimNode->SetObjectField(TEXT("linked_anim_layer"), AssetToJsonAnimationPrivate::ExportLinkedAnimLayer(LinkedAnimLayerNode));
+		}
+
+		if (const UAnimGraphNode_LinkedInputPose* LinkedInputPoseNode = Cast<UAnimGraphNode_LinkedInputPose>(AnimGraphNode))
+		{
+			JsonAnimNode->SetObjectField(TEXT("linked_input_pose"), AssetToJsonAnimationPrivate::ExportLinkedInputPose(LinkedInputPoseNode));
 		}
 
 		return JsonAnimNode;
